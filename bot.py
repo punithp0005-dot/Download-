@@ -121,15 +121,27 @@ def download_only(chat_id, url, start, end, quality="1080"):
     end = fix_ts(end)
     send(chat_id, "📥 Downloading "+start+" → "+end+" in "+quality+"p...")
     fmt = "bestvideo[height<="+quality+"]+bestaudio/best[height<="+quality+"]/best"
+
+    # Speed optimizations: concurrent downloads, buffer size, and connection settings
     cmd = ["yt-dlp","--download-sections","*"+start+"-"+end,
            "-f",fmt,"--merge-output-format","mp4",
-           "-o",out,"--no-playlist","--retries","3",url]
-    subprocess.run(cmd, capture_output=True)
+           "-o",out,"--no-playlist","--retries","5",
+           "--concurrent-fragments","8",
+           "--buffer-size","16K",
+           "--http-chunk-size","10M",
+           "--throttled-rate","100K",
+           "-N","8",url]
+    subprocess.run(cmd, capture_output=True, timeout=600)
+
     if not os.path.exists(out) or os.path.getsize(out) < 10000:
         cmd2 = ["yt-dlp","--download-sections","*"+start+"-"+end,
                 "-f","best","--merge-output-format","mp4",
-                "-o",out,"--no-playlist",url]
-        subprocess.run(cmd2, capture_output=True)
+                "-o",out,"--no-playlist",
+                "--concurrent-fragments","8",
+                "--buffer-size","16K",
+                "-N","8",url]
+        subprocess.run(cmd2, capture_output=True, timeout=600)
+
     if os.path.exists(out) and os.path.getsize(out) > 10000:
         size = round(os.path.getsize(out)/(1024*1024), 1)
         send_video(chat_id, out, "✅ "+quality+"p | "+str(size)+"MB | "+WATERMARK)
@@ -143,13 +155,25 @@ def download_full(chat_id, url, quality="1080"):
     out = os.path.join(OUT, "full_"+ts+".mp4")
     send(chat_id, "📥 Downloading full video in "+quality+"p...")
     fmt = "bestvideo[height<="+quality+"]+bestaudio/best[height<="+quality+"]/best"
+
+    # Speed optimizations for full video downloads
     cmd = ["yt-dlp","-f",fmt,"--merge-output-format","mp4",
-           "-o",out,"--no-playlist","--retries","3",url]
-    subprocess.run(cmd, capture_output=True)
+           "-o",out,"--no-playlist","--retries","5",
+           "--concurrent-fragments","8",
+           "--buffer-size","16K",
+           "--http-chunk-size","10M",
+           "--throttled-rate","100K",
+           "-N","8",url]
+    subprocess.run(cmd, capture_output=True, timeout=600)
+
     if not os.path.exists(out) or os.path.getsize(out) < 10000:
         cmd2 = ["yt-dlp","-f","best","--merge-output-format","mp4",
-                "-o",out,"--no-playlist",url]
-        subprocess.run(cmd2, capture_output=True)
+                "-o",out,"--no-playlist",
+                "--concurrent-fragments","8",
+                "--buffer-size","16K",
+                "-N","8",url]
+        subprocess.run(cmd2, capture_output=True, timeout=600)
+
     if os.path.exists(out) and os.path.getsize(out) > 10000:
         size = round(os.path.getsize(out)/(1024*1024), 1)
         send_video(chat_id, out, "✅ "+quality+"p | "+str(size)+"MB | "+WATERMARK)
@@ -170,14 +194,23 @@ def edit_clip(chat_id, url, start, end, emotion, hook, line1, line2, action, cap
 
     send(chat_id, "📥 Downloading clip "+str(num)+"... "+start+" → "+end)
 
+    # Speed optimizations: concurrent fragments, buffering, and multiple connections
     cmd = ["yt-dlp","--download-sections","*"+start+"-"+end,
            "-f","bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-           "--merge-output-format","mp4","-o",raw,"--no-playlist","--retries","3",url]
-    subprocess.run(cmd, capture_output=True)
+           "--merge-output-format","mp4","-o",raw,"--no-playlist","--retries","5",
+           "--concurrent-fragments","8",
+           "--buffer-size","16K",
+           "--http-chunk-size","10M",
+           "-N","8",url]
+    subprocess.run(cmd, capture_output=True, timeout=600)
+
     if not os.path.exists(raw) or os.path.getsize(raw) < 10000:
         cmd2 = ["yt-dlp","--download-sections","*"+start+"-"+end,
-                "-f","best","--merge-output-format","mp4","-o",raw,"--no-playlist",url]
-        subprocess.run(cmd2, capture_output=True)
+                "-f","best","--merge-output-format","mp4","-o",raw,"--no-playlist",
+                "--concurrent-fragments","8",
+                "--buffer-size","16K",
+                "-N","8",url]
+        subprocess.run(cmd2, capture_output=True, timeout=600)
 
     if not os.path.exists(raw) or os.path.getsize(raw) < 10000:
         send(chat_id, "❌ Download failed clip "+str(num))
@@ -193,7 +226,7 @@ def edit_clip(chat_id, url, start, end, emotion, hook, line1, line2, action, cap
     tc = fx["tc"]
     bc = fx["bc"]
 
-    # Step 1: Make 1:1 blur background
+    # Step 1: Make 1:1 blur background - faster preset
     r1 = subprocess.run([
         "ffmpeg","-y","-i",raw,
         "-filter_complex",
@@ -201,9 +234,9 @@ def edit_clip(chat_id, url, start, end, emotion, hook, line1, line2, action, cap
         "[0:v]scale=810:810:force_original_aspect_ratio=decrease,pad=810:810:(ow-iw)/2:(oh-ih)/2[fg];"
         "[bg][fg]overlay=(W-w)/2:(H-h)/2[v]",
         "-map","[v]","-map","0:a",
-        "-c:v","libx264","-preset","fast","-crf","16",
+        "-c:v","libx264","-preset","veryfast","-crf","18",
         "-c:a","aac","-b:a","192k", sq
-    ], capture_output=True)
+    ], capture_output=True, timeout=300)
 
     src = sq if r1.returncode == 0 and os.path.exists(sq) else raw
 
@@ -245,27 +278,27 @@ def edit_clip(chat_id, url, start, end, emotion, hook, line1, line2, action, cap
             "[0:a]"+fx["af"]+"[oa];"
             "[va][oa]amix=inputs=2:duration=shortest:weights=3 1[a]",
             "-map","[v]","-map","[a]",
-            "-c:v","libx264","-preset","fast","-crf","16",
+            "-c:v","libx264","-preset","veryfast","-crf","18",
             "-b:v","4000k","-c:a","aac","-b:a","192k",final
-        ], capture_output=True, text=True)
+        ], capture_output=True, text=True, timeout=300)
     else:
         r2 = subprocess.run([
             "ffmpeg","-y","-i",src,
             "-vf",vf,"-af",fx["af"],
-            "-c:v","libx264","-preset","fast","-crf","16",
+            "-c:v","libx264","-preset","veryfast","-crf","18",
             "-b:v","4000k","-c:a","aac","-b:a","192k",final
-        ], capture_output=True, text=True)
+        ], capture_output=True, text=True, timeout=300)
 
     print("Edit rc:", r2.returncode)
     if r2.returncode != 0:
         print("Edit err:", r2.stderr[-300:])
-        # Fallback - just color grade
+        # Fallback - just color grade with faster preset
         subprocess.run([
             "ffmpeg","-y","-i",src,
             "-vf",fx["eq"],"-af",fx["af"],
-            "-c:v","libx264","-preset","fast","-crf","16",
+            "-c:v","libx264","-preset","veryfast","-crf","18",
             "-c:a","aac",final
-        ], capture_output=True)
+        ], capture_output=True, timeout=300)
 
     for f in [raw,sq,voice]:
         if os.path.exists(f): os.remove(f)
@@ -355,13 +388,20 @@ def handle(message):
             "🎬 <b>ViralCutz AI Bot</b>\n\n"
             "<b>Commands:</b>\n\n"
             "🔗 Paste any YouTube/Twitch link → AI finds + edits clips!\n\n"
-            "/clip [url] [start] [end] → Download clip only\n"
+            "/clip [url] [start] [end] → Download clip only (1080p)\n"
+            "/clip1440 [url] [start] [end] → Download clip in 1440p\n"
             "/dl [url] → Download full video 1080p\n"
             "/dl1440 [url] → Download 1440p\n"
             "/dl720 [url] → Download 720p\n"
             "/prompt → Get Gemini prompt for manual use\n\n"
             "<b>Example:</b>\n"
-            "<code>/clip https://youtu.be/xxx 5:00 5:50</code>")
+            "<code>/clip https://youtu.be/xxx 5:00 5:50</code>\n"
+            "<code>/clip1440 https://youtu.be/xxx 5:00 5:50</code>\n\n"
+            "⚡ <b>Now with FASTER downloads!</b> Using:\n"
+            "• 8 concurrent fragment downloads\n"
+            "• Optimized buffering (16K buffer + 10M chunks)\n"
+            "• 8 parallel connections\n"
+            "• Faster ffmpeg encoding (veryfast preset)")
         return
 
     if text.startswith("/prompt"):
@@ -393,6 +433,16 @@ def handle(message):
     if text.startswith("/dl "):
         url = text.replace("/dl ","").strip()
         threading.Thread(target=download_full, args=(chat_id,url,"1080"), daemon=True).start()
+        return
+
+    if text.startswith("/clip1440 "):
+        parts = text.split()
+        if len(parts) >= 4:
+            threading.Thread(target=download_only,
+                args=(chat_id,parts[1],parts[2],parts[3],"1440"),
+                daemon=True).start()
+        else:
+            send(chat_id, "Usage: /clip1440 [url] [start] [end]\nExample: /clip1440 https://youtu.be/xxx 5:00 5:50")
         return
 
     if text.startswith("/clip "):
